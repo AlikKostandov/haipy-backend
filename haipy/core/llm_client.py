@@ -37,18 +37,18 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
 
 
 class LLMClient:
-    def __init__(self, *, timeout_s: float = 60, retries: int = 2):
+    def __init__(self, *, api_key: Optional[str] = None, timeout_s: float = 60, retries: int = 2):
         self.timeout_s = float(timeout_s)
         self.retries = int(retries)
 
         self.model = os.getenv("LLM_MODEL", "llama-3.1-8b-instant")
         self.debug = os.getenv("LLM_DEBUG", "false").lower() == "true"
 
-        api_key = os.getenv("GROQ_API_KEY") or os.getenv("LLM_API_KEY")
-        if not api_key:
-            raise LLMError("Missing GROQ_API_KEY (or LLM_API_KEY).")
+        key = (api_key or os.getenv("GROQ_API_KEY") or os.getenv("LLM_API_KEY") or "").strip()
+        if not key:
+            raise LLMError("Missing Groq API key.")
 
-        self.client = Groq(api_key=api_key, timeout=self.timeout_s, max_retries=0)
+        self.client = Groq(api_key=key, timeout=self.timeout_s, max_retries=0)
 
     def generate_json(
         self,
@@ -105,4 +105,27 @@ class LLMClient:
                 base = 0.6 * (2 ** attempt)
                 time.sleep(base + random.uniform(0.0, 0.25))
 
-        raise LLMError(f"LLM request failed after {self.retries + 1} attempts: {last_err}") from last_err
+        raise LLMError(self._human_error(last_err)) from last_err
+
+    def _human_error(self, err: Exception) -> str:
+        msg = str(err).lower()
+
+        if "invalid api key" in msg or "invalid_api_key" in msg:
+            return "Неверный Groq API Key. Проверьте правильность ключа."
+
+        if "rate limit" in msg or "429" in msg:
+            return (
+                "Превышен лимит запросов Groq API. "
+                "Подождите немного или используйте другой ключ."
+            )
+
+        if "timeout" in msg:
+            return "Превышено время ожидания ответа от модели. Попробуйте ещё раз."
+
+        if "permission" in msg or "forbidden" in msg:
+            return "Нет доступа к модели. Проверьте права вашего Groq API Key."
+
+        return (
+            "Не удалось получить ответ от модели. "
+            "Проверьте ключ и попробуйте ещё раз."
+        )
